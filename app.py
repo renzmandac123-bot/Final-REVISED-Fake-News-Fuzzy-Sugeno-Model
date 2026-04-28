@@ -281,35 +281,32 @@ def fetch_from_url(url):
     text, title, img_url, img_arr, img_desc = "", "", "", None, ""
     log = []
 
+    # extract article using requests + BeautifulSoup
     try:
-        from newspaper import Article as _NpArticle
-        art = _NpArticle(url, headers=headers, fetch_images=False)
-        art.download()
-        art.parse()
-        text      = art.text or ""
-        title     = art.title or ""
-        img_url   = art.top_image or ""
-        log.append(f"newspaper4k: {len(text)} chars")
+        from bs4 import BeautifulSoup
+        resp = requests.get(url, headers=headers, timeout=12)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        og_t = soup.find("meta", property="og:title")
+        if og_t and og_t.get("content"):
+            title = og_t["content"].strip()
+        elif soup.title:
+            title = soup.title.string.strip()
+        og_i = soup.find("meta", property="og:image")
+        img_url = og_i["content"].strip() if og_i and og_i.get("content") else ""
+        body = (soup.find("article") or
+                soup.find("main") or
+                soup.find("div", attrs={"class": re.compile(r"article|content|body|story", re.I)}) or
+                soup.body)
+        if body:
+            for tag in body.find_all(["nav","aside","footer","script",
+                                      "style","noscript","iframe","form"]):
+                tag.decompose()
+            text = re.sub(r'\n{3,}', '\n\n',
+                          body.get_text(separator="\n")).strip()
+        log.append(f"Extracted {len(text)} chars via BeautifulSoup")
     except Exception as e:
-        log.append(f"newspaper4k failed: {e}")
-
-    if len(text) < 100:
-        try:
-            from bs4 import BeautifulSoup
-            resp = requests.get(url, headers=headers, timeout=12)
-            soup = BeautifulSoup(resp.text, "html.parser")
-            og_t = soup.find("meta", property="og:title")
-            title = og_t["content"].strip() if og_t and og_t.get("content") else ""
-            og_i = soup.find("meta", property="og:image")
-            img_url = og_i["content"].strip() if og_i and og_i.get("content") else ""
-            body = (soup.find("article") or soup.find("main") or soup.body)
-            if body:
-                for tag in body.find_all(["nav","aside","footer","script","style","noscript"]):
-                    tag.decompose()
-                text = re.sub(r'\n{3,}', '\n\n', body.get_text(separator="\n")).strip()
-                log.append(f"BS4 fallback: {len(text)} chars")
-        except Exception as e:
-            log.append(f"BS4 fallback failed: {e}")
+        log.append(f"Extraction failed: {e}")
 
     # strip bylines
     text = re.sub(
